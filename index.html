@@ -736,8 +736,8 @@ function renderTareas(){
         + (reorder?'':'<button class="add" data-new>Nueva tarea</button><button class="add" data-new-agenda>Añadir a la agenda</button>'),
         reorder ? 'Usa las flechas' : String(active.length))}
     ${old.length && !reorder ? theme('En pausa y pasadas', old.map(t=>item(t)).join(''), String(old.length)) : ''}
-    ${reorder ? '' : theme('Repaso diario', `<p class="note">Una alarma cada día para acordarte de revisar y marcar lo que has hecho.</p>
-      <div class="btns" style="align-items:center"><input class="inp" type="time" id="review" value="${esc(S.settings.review||'21:30')}" style="flex:1"><button class="btn primary" data-review>Crear alarma</button></div>`)}
+    ${reorder ? '' : theme('Repaso diario', `<p class="note">Una notificación cada día a esta hora para acordarte de revisar y marcar lo que has hecho. Se crea en el Calendario del iPhone, que es quien la envía.</p>
+      <div class="btns" style="align-items:center"><input class="inp" type="time" id="review" value="${esc(S.settings.review||'21:30')}" style="flex:1"><button class="btn primary" data-review>Crear notificación</button></div>`)}
     ${reorder ? '' : theme('Copia de seguridad', `<p class="note">Los datos solo están en este móvil. Exporta una copia de vez en cuando por si cambias de móvil o borras los datos de Safari.</p>
     <div class="btns"><button class="btn" data-export>Exportar copia</button><button class="btn" data-import>Importar copia</button></div>`)}`;
 }
@@ -897,11 +897,14 @@ function openEditor(t, preset={}){
       <div id="wk" class="inline" style="margin-top:12px"><span style="flex:1">Veces por semana<div class="hint" style="margin:2px 0 0">El día que te vaya bien</div></span>
         <div class="stepper"><button data-tg="-1" aria-label="Menos">−</button><b id="tgv"></b><button data-tg="1" aria-label="Más">+</button></div></div>
       <div id="dt" style="margin-top:6px"><input class="inp" type="date" id="date" value="${d.date}"></div></div>
+    <div class="fld" id="startf"><label for="start" id="startlbl">Desde</label>
+      <input class="inp" type="date" id="start" value="${d.start}">
+      <p class="hint" id="starthint"></p></div>
     <div class="fld" id="optf"><label for="opts">Opciones al marcar, separadas por comas</label>
       <input class="inp" id="opts" placeholder="Gimnasio, Correr, Bici" value="${esc(d.options.join(', '))}">
       <p class="hint">Opcional. Sirve para apuntar cuál hiciste.</p></div>
     <div class="fld"><label for="rem" id="remlbl">Aviso</label>
-      <div class="inline"><input class="inp" type="time" id="rem" value="${esc(d.remind||'')}" style="flex:1"><button class="btn" id="cal">Añadir al Calendario</button></div>
+      <div class="inline"><input class="inp" type="time" id="rem" value="${esc(d.remind||'')}" style="flex:1"><button class="btn" id="cal">Crear notificación</button></div>
       <p class="hint" id="remhint"></p></div>
     <div class="fld ${window.Group?.enabled ? '' : 'hidden'}"><label>Grupo</label>
       <div class="seg" id="shr"><button data-s="1">Compartida</button><button data-s="0">Privada</button></div>
@@ -926,8 +929,12 @@ function openEditor(t, preset={}){
     q('#wk').classList.toggle('hidden',d.type!=='weekly');
     q('#tgv').textContent = d.target;
     q('#remlbl').textContent = d.type==='once' ? 'Hora' : 'Aviso';
-    q('#remhint').textContent = d.type==='once' ? 'Opcional. Con «Añadir al Calendario» el iPhone te avisará a esa hora.'
-      : 'Crea un evento con alarma en el Calendario del iPhone, repetido los días que toque.';
+    q('#startf').classList.toggle('hidden', d.type==='once');
+    q('#startlbl').textContent = d.kind==='avoid' ? 'Empecé el' : 'Desde';
+    q('#starthint').textContent = d.kind==='avoid' ? 'El contador cuenta los días sin fallar desde esta fecha.'
+      : 'Los días anteriores a esta fecha no cuentan en tus estadísticas.';
+    q('#remhint').textContent = d.type==='once' ? 'Opcional. Con «Crear notificación» el iPhone te avisará a esa hora.'
+      : 'Te llega una notificación a esa hora los días que toque. La envía el Calendario del iPhone.';
     $sheet.querySelectorAll('#col button').forEach(b=>b.classList.toggle('on', +b.dataset.ci===d.color));
     q('#shr').querySelectorAll('button').forEach(b=>b.classList.toggle('on', (b.dataset.s==='1')===(d.shared!==false)));
   };
@@ -945,6 +952,12 @@ function openEditor(t, preset={}){
     d.date=q('#date').value||sel;
     d.remind=q('#rem').value||'';
     d.goal = +String(q('#goal').value).replace(',','.') || 1; d.unit=q('#unit').value.trim();
+    if(d.type!=='once'){
+      const sv=q('#start').value;
+      if(!sv){ toast('Elige la fecha de inicio'); return false; }
+      if(d.kind==='avoid' && sv>todayKey()){ toast('La fecha de inicio no puede ser futura'); return false; }
+      d.start=sv;
+    }
     if(d.type==='weekdays' && !d.days.length){ toast('Elige al menos un día de la semana'); return false; }
     return true;
   };
@@ -976,7 +989,8 @@ function openEditor(t, preset={}){
   });
 }
 
-/* Avisos: genera un .ics con alarma; iOS lo abre en Calendario y avisa con notificación */
+/* Avisos: genera un evento .ics con aviso; iOS lo añade al Calendario y envía una notificación (no es una alarma de despertador).
+   TRANSPARENT = el evento no ocupa esa hora como "ocupado". */
 function downloadIcs({id, name, date, time, rrule, desc}){
   const [hh,mm]=time.split(':').map(Number);
   const st=new Date(date.getFullYear(),date.getMonth(),date.getDate(),hh,mm), en=new Date(st.getTime()+15*60000);
@@ -984,14 +998,14 @@ function downloadIcs({id, name, date, time, rrule, desc}){
   const txt=s=>s.replace(/[\\,;]/g,m=>'\\'+m).replace(/\n/g,'\\n');
   const ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Obligacions//ES','CALSCALE:GREGORIAN','METHOD:PUBLISH','BEGIN:VEVENT',
     `UID:${id}-${Date.now()}@obligacions`,`DTSTAMP:${f(new Date())}`,`DTSTART:${f(st)}`,`DTEND:${f(en)}`, rrule||'',
-    `SUMMARY:${txt(name)}`,`DESCRIPTION:${txt(desc||'Aviso de Obligacions')}`,
+    'TRANSP:TRANSPARENT',`SUMMARY:${txt(name)}`,`DESCRIPTION:${txt(desc||'Aviso de Obligacions')}`,
     'BEGIN:VALARM','ACTION:DISPLAY',`DESCRIPTION:${txt(name)}`,'TRIGGER:PT0M','END:VALARM','END:VEVENT','END:VCALENDAR'
   ].filter(Boolean).join('\r\n');
   const url=URL.createObjectURL(new Blob([ics],{type:'text/calendar'}));
   const a=document.createElement('a'); a.href=url;
   if(!/iPhone|iPad|iPod/.test(navigator.userAgent)) a.download=`${name}.ics`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
-  toast('Pulsa Añadir en el Calendario');
+  toast('Pulsa Añadir en el Calendario para activar la notificación');
 }
 function addToCalendar(t){
   const base = t.type==='once' ? parse(t.date) : (()=>{ // primer día que toca desde hoy
