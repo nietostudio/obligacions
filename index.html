@@ -296,6 +296,18 @@ textarea.inp{resize:none;min-height:76px;line-height:1.45;border:0;font-size:16p
 .cmp.head2 b{font-weight:600}
 .weekly{border:1px solid var(--line2)}
 .btns .inp{min-width:0}
+/* calendario del mes: rayas por tarea */
+.md{background:#262a30;overflow:hidden}
+.md svg{position:absolute;inset:0;width:100%;height:100%}
+.md span{position:relative;z-index:1;text-shadow:0 0 3px #000,0 0 2px #000}
+.md.full{box-shadow:inset 0 0 0 2px var(--text)}
+.md.full.today{box-shadow:inset 0 0 0 2px var(--text),inset 0 -5px 0 var(--today)}
+.md.zero{background:color-mix(in srgb,var(--miss) 30%,#262a30)}
+.md.fut{background:transparent}
+.legend2{display:flex;flex-wrap:wrap;gap:8px 14px;padding:2px 14px 14px;color:var(--muted);font-size:13px}
+.legend2 span{display:flex;align-items:center;gap:6px}
+.legend2 i{width:14px;height:4px;border-radius:2px;background:var(--c);transform:rotate(45deg)}
+.legend2 .full i{width:12px;height:12px;border-radius:3px;background:none;box-shadow:inset 0 0 0 2px var(--text);transform:none}
 </style>
 </head>
 <body>
@@ -681,12 +693,19 @@ function renderMes(){
   const keys=[...Array(nd)].map((_,i)=>keyOf(new Date(y,m,i+1)));
   let cells = DOW.map(x=>`<div class="h">${x}</div>`).join('') + '<div></div>'.repeat(dow(first));
   let done=0,total=0,perfect=0;
+  const lanes = S.tasks.filter(t=>t.type!=='once' && keys.some(k=>k<=tk && applies(t,k)));
   for(const k of keys){
     const s=dayStats(k), fut=k>tk;
     if(!fut && s.total){ done+=s.done; total+=s.total; if(s.done===s.total) perfect++; }
-    const bg = fut ? 'transparent' : heat(s.pct);
-    const ink = !fut && s.pct>=.55 ? 'var(--bg)' : 'var(--text)';
-    cells += `<button class="md ${k===tk?'today':''} ${fut?'fut':''} ${S.notes[k]?'hasnote':''}" data-day="${k}" style="background:${bg};color:${ink}">${parse(k).getDate()}</button>`;
+    // una raya diagonal por cada tarea cumplida, siempre en la misma posición y con su color
+    const lines = fut ? '' : lanes.map((t,i)=>{
+      if(!applies(t,k) || !isDone(k,t.id)) return '';
+      const c = 200*(i+1)/(lanes.length+1), x1=Math.max(0,c-100), x2=Math.min(100,c);
+      return `<line x1="${x1}" y1="${100-(c-x1)}" x2="${x2}" y2="${100-(c-x2)}" stroke="${colorOf(t)}"/>`;
+    }).join('');
+    const cls = [k===tk?'today':'', fut?'fut':'', S.notes[k]?'hasnote':'',
+      !fut && s.total && s.done===s.total ? 'full' : '', !fut && s.total && s.done===0 && k<tk ? 'zero' : ''].join(' ');
+    cells += `<button class="md ${cls}" data-day="${k}">${lines?`<svg viewBox="0 0 100 100" preserveAspectRatio="none" stroke-width="${lanes.length>5?7:9}">${lines}</svg>`:''}<span>${parse(k).getDate()}</span></button>`;
   }
   const past = keys.filter(k=>k<=tk);
   const stats = S.tasks.filter(t=>t.type!=='once').map(t=>{
@@ -708,7 +727,8 @@ function renderMes(){
       <div><b>${done}</b><span>tareas hechas</span></div>
       <div><b>${perfect}</b><span>días completos</span></div></div>
     ${theme('Calendario', `<div class="mgrid">${cells}</div>
-    <div class="legend">Nada <i style="background:${heat(0)}"></i><i style="background:${heat(.33)}"></i><i style="background:${heat(.66)}"></i><i style="background:${heat(1)}"></i> Todo</div>`)}
+    <div class="legend2">${lanes.map(t=>`<span style="--c:${colorOf(t)}"><i></i>${esc(t.name)}</span>`).join('')}
+      <span class="full"><i></i>Todo cumplido</span></div>`)}
     ${theme('Por tarea', stats || '<div class="empty">Este mes aún no tiene datos.</div>', stats?'Toca para ver la ficha':'')}`;
 }
 
